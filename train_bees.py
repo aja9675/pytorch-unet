@@ -18,9 +18,12 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 import time
 import copy
+import cv2
+from model import ResNetUNet
+from torchsummary import summary
 
 # My custom dataset
-from bee_dataloader import BeePointDataset
+from bee_dataloader import BeePointDataset, visualize_bee_points
 
 
 def calc_loss(pred, target, metrics, bce_weight=0.5):
@@ -44,7 +47,7 @@ def print_metrics(metrics, epoch_samples, phase):
 
 	print("{}: {}".format(phase, ", ".join(outputs)))
 
-def train_model(model, optimizer, scheduler, num_epochs=25):
+def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
@@ -111,19 +114,11 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
 
 if __name__ == "__main__":
 
-	batch_size = 25
+	batch_size = 4
 	num_epochs = 2
 
 	# Setup dataset
-
-	# use the same transformations for train/val in this example
-	trans = transforms.Compose([
-		transforms.ToTensor()
-		#transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # imagenet
-	])
-
-	#dataset = BeePointDataset(root = './data', train = train, transform = transform, download=True)
-	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523', transform=trans)
+	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
 	# Split dataset
 	dataset_len = len(bee_ds)
 	print("Total dataset length: ", dataset_len)
@@ -134,12 +129,25 @@ if __name__ == "__main__":
 	train_size = dataset_len - test_size - val_size
 	print("Num Train/eval/test: %i/%i/%i" % (train_size, val_size, test_size))
 	train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(bee_ds, [train_size, val_size, test_size])
+	#print(train_dataset.indices)
+	#print(val_dataset.indices)
+	#print(test_dataset.indices)
 	# Create dataloaders
-	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-	test_dataset = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=0)
+	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
+	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
+	dataloaders = { 'train': train_loader, 'val': val_loader }
 
-	sys.exit(1)
+	# Note that len(dataloader) won't work, see:
+	#https://pytorch.org/docs/stable/data.html#module-torch.utils.data
+	#print(len(train_loader))
+
+	if 0:
+		# Verify dataloader is working
+		for i_batch, sample_batched in enumerate(val_loader):
+			for i in range(batch_size):
+				visualize_bee_points(sample_batched[0][i], sample_batched[1][i])
+
 
 	# Train
 
@@ -148,6 +156,9 @@ if __name__ == "__main__":
 
 	num_class = 1
 	model = ResNetUNet(num_class).to(device)
+
+	# check keras-like model summary using torchsummary
+	#summary(model, input_size=(3, 224, 224))
 
 	# freeze backbone layers
 	#for l in model.base_layers:
@@ -158,6 +169,6 @@ if __name__ == "__main__":
 
 	exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=30, gamma=0.1)
 
-	model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs=num_epochs)
+	model = train_model(model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs=num_epochs)
 
 
