@@ -1,5 +1,15 @@
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
+import cv2
+
+def show_image(window, img):
+    cv2.imshow(window, img)
+
+    # Escape key will exit program
+    key = cv2.waitKey(0) & 0xFF
+    if key == 27:
+        sys.exit(0)
 
 def plot_img_array(img_array, ncol=3):
     nrow = len(img_array) // ncol

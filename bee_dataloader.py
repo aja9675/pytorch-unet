@@ -19,15 +19,6 @@ import cv2
 disp_size = (1920, 1080) # 1080p
 #disp_size = (1280, 720) # 720p
 
-# Just for debugging
-def show_image(window, img):
-	cv2.imshow(window, img)
-
-	# Escape key will exit program
-	key = cv2.waitKey(0) & 0xFF
-	if key == 27:
-		sys.exit(0)
-
 
 class BeePointDataset(Dataset):
 	"""Bee point dataset."""
@@ -44,7 +35,10 @@ class BeePointDataset(Dataset):
 		# Glob all the label files in root_dir
 		self.labels_file_list = []
 		self.labels_file_list.extend(glob.glob(os.path.join(root_dir, "*.labels")))
-		self.input_size = (720, 1280) # (rows, cols) - 720p
+		#self.input_size = (720, 1280) # (rows, cols) - 720p
+		# Hacking this so the autoencoder spatial dimensions line up cleanly
+		self.input_size = (736, 1280) # (rows, cols) - 720p
+		#self.input_size = (126, 224)
 
 	def __len__(self):
 		return len(self.labels_file_list)
@@ -66,11 +60,15 @@ class BeePointDataset(Dataset):
 	def __resize(self, image, points):
 		h, w = image.shape[:2]
 		new_h, new_w = self.input_size
+		#print(image.shape)
+		#print(self.input_size)
 		# Handle OpenCV row/col weirdness
 		image = cv2.resize(image, (self.input_size[1], self.input_size[0]))
-		points = points * [new_w / w, new_h / h]
+		#print("Orig points: ", points)
+		points = points * [new_h / h, new_w / w]
 		# Convert back to int
 		points = np.int32(points)
+		#print("New points: ", points)
 		return image, points
 
 	# Need to use a custom transform b/c of the segmentation mask
@@ -115,6 +113,10 @@ class BeePointDataset(Dataset):
 		mask = np.zeros(image.shape[:2], dtype=np.uint8)
 		pts_x, pts_y = points.T
 		mask[pts_x, pts_y] = 1
+		# I think I need to do this? (720, 1280) -> (1, 720, 1280)
+		mask = np.expand_dims(mask, axis=0)
+		# Or is it (720, 1280) -> (720, 1280, 1)?
+		#mask = np.expand_dims(mask, axis=2)
 
 		image, mask = self.__transform(image, mask)
 
@@ -126,7 +128,7 @@ class BeePointDataset(Dataset):
 def visualize_bee_points(image, mask):
 	# Need to transpose from (3, 720, 1280) tensor to (720, 1280, 3) image
 	image = np.asarray(image).transpose(1,2,0)
-	mask = np.asarray(mask)
+	mask = np.asarray(mask).squeeze()
 	#print(image.dtype)
 	#print(image.shape)
 	# Convert back from 0-1.0 to 0-255
@@ -140,7 +142,7 @@ def visualize_bee_points(image, mask):
 	# Dilate for visibility
 	mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
 	mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-	show_image('img', cv2.resize(np.hstack((image,mask)), disp_size))
+	helper.show_image('img', cv2.resize(np.hstack((image,mask)), disp_size))
 
 
 if __name__ == "__main__":
