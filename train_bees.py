@@ -51,6 +51,8 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
+	checkpoint_path = "./checkpoint.pth"
+
 	for epoch in range(num_epochs):
 		print('Epoch {}/{}'.format(epoch, num_epochs - 1))
 		print('-' * 10)
@@ -73,7 +75,11 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 
 			for inputs, labels in dataloaders[phase]:
 				inputs = inputs.to(device)
-				labels = labels.to(device)
+				# AA - TODO - fix this
+				# I made this an int in the dataloader, I guess it should be a float?
+				labels = labels.to(device).float()
+				#print(inputs.dtype)
+				#print(labels.dtype)
 
 				# zero the parameter gradients
 				optimizer.zero_grad()
@@ -101,6 +107,9 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 				best_loss = epoch_loss
 				best_model_wts = copy.deepcopy(model.state_dict())
 
+				print("saving best model to: ", checkpoint_path)
+				torch.save(model.state_dict(), checkpoint_path)
+
 		time_elapsed = time.time() - since
 		print('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
 
@@ -115,7 +124,7 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 if __name__ == "__main__":
 
 	batch_size = 4
-	num_epochs = 2
+	num_epochs = 25
 
 	# Setup dataset
 	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
