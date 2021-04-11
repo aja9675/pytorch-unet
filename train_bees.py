@@ -21,9 +21,14 @@ import copy
 import cv2
 from model import ResNetUNet
 from torchsummary import summary
+import pickle
+import argparse
 
 # My custom dataset
 from bee_dataloader import BeePointDataset, visualize_bee_points
+
+from datetime import datetime
+current_datetime = datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
 
 
 def calc_loss(pred, target, metrics, bce_weight=0.5):
@@ -47,11 +52,11 @@ def print_metrics(metrics, epoch_samples, phase):
 
 	print("{}: {}".format(phase, ", ".join(outputs)))
 
-def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
+def train_model(model, optimizer, scheduler, dataloaders, num_epochs, out_dir):
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
-	checkpoint_path = "./checkpoint.pth"
+	checkpoint_path = os.path.join(out_dir, current_datetime, "checkpoint.pth")
 
 	for epoch in range(num_epochs):
 		print('Epoch {}/{}'.format(epoch, num_epochs - 1))
@@ -119,15 +124,31 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs=25):
 	model.load_state_dict(best_model_wts)
 	return model
 
+# Helper for pickling loaders, mostly used for testing on the right test data
+def pickle_datasets(out_dir, train, val, test):
+	out_dir = os.path.join(out_dir, current_datetime)
+	if not os.path.exists(out_dir):
+		os.mkdir(out_dir)
+	train_path = os.path.join(out_dir, 'train_ds.pkl')
+	dbfile = open(train_path, 'wb')
+	pickle.dump(train, dbfile)
+	dbfile.close()
+	val_path = os.path.join(out_dir, 'val_ds.pkl')
+	dbfile = open(val_path, 'wb')
+	pickle.dump(val, dbfile)
+	dbfile.close()
+	test_path = os.path.join(out_dir, 'test_ds.pkl')
+	dbfile = open(test_path, 'wb')
+	pickle.dump(test, dbfile)
+	dbfile.close()
 
 
-if __name__ == "__main__":
-
+def train_bees(args):
 	batch_size = 4
 	num_epochs = 25
 
 	# Setup dataset
-	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
+	bee_ds = BeePointDataset(root_dir=args.data_dir)
 	# Split dataset
 	dataset_len = len(bee_ds)
 	print("Total dataset length: ", dataset_len)
@@ -141,6 +162,10 @@ if __name__ == "__main__":
 	#print(train_dataset.indices)
 	#print(val_dataset.indices)
 	#print(test_dataset.indices)
+
+	# Pickle our dataset lists so we can resume from them later (namely for testing)
+	pickle_datasets(args.out_dir, train_dataset, val_dataset, test_dataset)
+
 	# Create dataloaders
 	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=0)
 	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
@@ -178,6 +203,16 @@ if __name__ == "__main__":
 
 	exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=30, gamma=0.1)
 
-	model = train_model(model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs=num_epochs)
+	model = train_model(model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs, args.out_dir)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images/20180522_173523', type=str, help='Dataset dir')
+    parser.add_argument('--out_dir', default='./results', type=str, help='Results dir (will create a new folder from current datetime')
+    parser.set_defaults(func=train_bees)
+    args = parser.parse_args()
+    args.func(args)
 
 
