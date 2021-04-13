@@ -52,7 +52,7 @@ def print_metrics(metrics, epoch_samples, phase):
 
 	print("{}: {}".format(phase, ", ".join(outputs)))
 
-def train_model(model, optimizer, scheduler, dataloaders, num_epochs, out_dir):
+def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, out_dir):
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
@@ -92,6 +92,8 @@ def train_model(model, optimizer, scheduler, dataloaders, num_epochs, out_dir):
 				# forward
 				# track history if only in train
 				with torch.set_grad_enabled(phase == 'train'):
+					# Enable automatic mixed precision
+					#with torch.cuda.amp.autocast():
 					outputs = model(inputs)
 					loss = calc_loss(outputs, labels, metrics)
 
@@ -203,7 +205,7 @@ def train_bees(args):
 
 	exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=30, gamma=0.1)
 
-	model = train_model(model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs, args.out_dir)
+	model = train_model(device, model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs, args.out_dir)
 
 
 if __name__ == "__main__":
