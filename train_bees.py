@@ -80,9 +80,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 
 			for inputs, labels in dataloaders[phase]:
 				inputs = inputs.to(device)
-				# AA - TODO - fix this
-				# I made this an int in the dataloader, I guess it should be a float?
-				labels = labels.to(device).float()
+				labels = labels.to(device)
 				#print(inputs.dtype)
 				#print(labels.dtype)
 
@@ -211,7 +209,7 @@ def train_bees(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images/20180522_173523', type=str, help='Dataset dir')
+    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--out_dir', default='./results', type=str, help='Results dir (will create a new folder from current datetime')
     parser.set_defaults(func=train_bees)
     args = parser.parse_args()

@@ -12,7 +12,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets, models
 import torchvision.utils
 import torchvision.transforms.functional as TF
-
+import random
+from copy import deepcopy
 import cv2
 
 # Display size for debugging
@@ -23,7 +24,7 @@ disp_size = (1920, 1080) # 1080p
 class BeePointDataset(Dataset):
 	"""Bee point dataset."""
 
-	def __init__(self, root_dir, enable_augmentations=False):
+	def __init__(self, root_dir, sigma=2.5, enable_augmentations=False):
 		"""
 		Args:
 			root_dir (string): Directory with all the images.
@@ -34,11 +35,20 @@ class BeePointDataset(Dataset):
 		self.enable_augmentations = enable_augmentations
 		# Glob all the label files in root_dir
 		self.labels_file_list = []
-		self.labels_file_list.extend(glob.glob(os.path.join(root_dir, "*.labels")))
+		if 0:
+			# This takes forever!!! (documentation warns against using ** in large directories)
+			self.labels_file_list.extend(glob.glob(os.path.join(root_dir, "/**/*.labels"), recursive=True))
+		else:
+			# This is uglier but much much faster
+			for root, dirs, files in os.walk(root_dir):
+				for file in files:
+					if file.endswith(".labels"):
+						self.labels_file_list.append(os.path.join(root, file))
 		#self.input_size = (720, 1280) # (rows, cols) - 720p
 		# Hacking this so the autoencoder spatial dimensions line up cleanly
 		self.input_size = (736, 1280) # (rows, cols) - 720p
 		#self.input_size = (126, 224)
+		self.sigma = sigma
 
 	def __len__(self):
 		return len(self.labels_file_list)
@@ -91,8 +101,7 @@ class BeePointDataset(Dataset):
 
 		# Note that to_tensor converts to float and normalizes 0-1
 		image = TF.to_tensor(image)
-		# Using from_numpy to keep dtype and not normalize
-		mask = torch.from_numpy(mask)
+		mask = TF.to_tensor(mask)
 
 		return image, mask
 
@@ -110,49 +119,65 @@ class BeePointDataset(Dataset):
 		image, points = self.__resize(image, points)
 
 		# Create a 2D binary mask with background 0 and our points 1
-		mask = np.zeros(image.shape[:2], dtype=np.uint8)
+		mask = np.zeros(image.shape[:2], dtype=np.float32)
 		pts_x, pts_y = points.T
-		mask[pts_x, pts_y] = 1
-		# I think I need to do this? (720, 1280) -> (1, 720, 1280)
-		mask = np.expand_dims(mask, axis=0)
-		# Or is it (720, 1280) -> (720, 1280, 1)?
-		#mask = np.expand_dims(mask, axis=2)
+		mask[pts_x, pts_y] = 1.0
+		if 1:
+			# This assert will get triggered if you update input resolution and force
+			# you to re-evaluate the Gaussian that represents GT instances
+			assert self.input_size == (736, 1280), \
+				"You changed input resolution, is your Gaussian window and sigma still valid?"
+			# With (736, 1280) a bee width is ~17 pix
+			mask = cv2.GaussianBlur(mask, ksize=(17,17), sigmaX=self.sigma)
+			if 0:
+				show_mask = deepcopy(mask)
+				show_mask = cv2.normalize(src=show_mask, dst=None, \
+					alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+				helper.show_image("Gaussian mask", show_mask)
 
 		image, mask = self.__transform(image, mask)
 
 		sample = [image, mask]
-
 		return sample
 
 
 def visualize_bee_points(image, mask):
 	# Need to transpose from (3, 720, 1280) tensor to (720, 1280, 3) image
 	image = np.asarray(image).transpose(1,2,0)
-	mask = np.asarray(mask).squeeze()
+	mask = np.asarray(mask).squeeze().transpose(0,1)
 	#print(image.dtype)
 	#print(image.shape)
+	#print(mask.dtype)
+	#print(mask.shape)
 	# Convert back from 0-1.0 to 0-255
 	image = cv2.normalize(src=image, dst=None, \
 		alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
 	#print("Shapes: %s, %s" % (image.shape, mask.shape))
 	image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-	# Normalize mask, mult is safe b/c I only have 1 class
-	mask *= 255
-	# Dilate for visibility
-	mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+	mask = cv2.normalize(src=mask, dst=None, \
+		alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+	if 0:
+		# Dilate for visibility
+		# You may or may not want to do this depending on your value of sigma
+		mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
 	mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-	helper.show_image('img', cv2.resize(np.hstack((image,mask)), disp_size))
+	#helper.show_image("img", image)
+	cv2.imshow("img", image)
+	helper.show_image("mask", mask)
+	#helper.show_image('img mask', cv2.resize(np.hstack((image,mask)), disp_size))
 
 
 if __name__ == "__main__":
 	print("Testing BeePointDataset")
 
 	#bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523', enable_augmentations=True)
-	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
+	#bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
+	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images')
 
 	#for i in range(len(bee_ds)):
 	for i in range(4):
-		sample = bee_ds[i]
+		idx = random.randrange(0, len(bee_ds))
+		sample = bee_ds[idx]
 		visualize_bee_points(*sample)
 
