@@ -117,7 +117,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 				torch.save(model.state_dict(), os.path.join(checkpoint_dir, "best_model.pth"))
 
 		#if epoch % 10 and True:
-		if epoch % 1 and True:
+		if epoch % 1 == 0 and True:
 			checkpoint_filename = 'checkpoint_' + str(epoch) + '.pth'
 			print("Saving epoch checkpoint: ", checkpoint_filename)
 			torch.save(model.state_dict(), os.path.join(checkpoint_dir, checkpoint_filename))
@@ -133,9 +133,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 
 # Helper for pickling loaders, mostly used for testing on the right test data
 def pickle_datasets(out_dir, train, val, test):
-	out_dir = os.path.join(out_dir, current_datetime)
-	if not os.path.exists(out_dir):
-		os.mkdir(out_dir)
+
 	train_path = os.path.join(out_dir, 'train_ds.pkl')
 	dbfile = open(train_path, 'wb')
 	pickle.dump(train, dbfile)
@@ -171,8 +169,21 @@ def train_bees(args):
 	#print(val_dataset.indices)
 	#print(test_dataset.indices)
 
+	out_dir = os.path.abspath(args.out_dir)
+	# Delete existing 'results/latest' symlink if it exists
+	latest_symlink = os.path.join(out_dir, 'latest')
+	if os.path.exists(latest_symlink):
+		os.remove(latest_symlink)
+
+	# Create a new results directiory
+	out_dir = os.path.join(out_dir, current_datetime)
+	if not os.path.exists(out_dir):
+		os.mkdir(out_dir)
+	os.symlink(out_dir, latest_symlink)
+	sys.exit(1)
+
 	# Pickle our dataset lists so we can resume from them later (namely for testing)
-	pickle_datasets(args.out_dir, train_dataset, val_dataset, test_dataset)
+	pickle_datasets(out_dir, train_dataset, val_dataset, test_dataset)
 
 	# Create dataloaders
 	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=10)
