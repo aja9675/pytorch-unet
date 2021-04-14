@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import torch
 import math
 import numpy as np
@@ -14,12 +15,18 @@ import helper
 # My custom dataset
 from bee_dataloader import BeePointDataset, visualize_bee_points
 import pickle
+import time
+import argparse
 
 # For clustering & centroid detection
 # Mean shift?
 #from sklearn.cluster import MeanShift, estimate_bandwidth
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
+
+
+# For inference timing of different components
+ENABLE_TIMING = True
 
 
 def normalize_uint8(img):
@@ -126,32 +133,32 @@ def get_centroids(pred):
 	return centroids
 
 
-if __name__ == "__main__":
-
-	PATH = "/home/alex/rit/adv_cv/project/bees/pytorch-unet/checkpoint.pth"
+def inference(args):
 
 	num_class = 1
 	model = ResNetUNet(num_class)
 	device = torch.device("cuda")
-	model.load_state_dict(torch.load(PATH, map_location="cuda:0"))  # Choose whatever GPU device number you want
+	model_file = os.path.join(args.model_dir, 'best_model.pth')
+	model.load_state_dict(torch.load(model_file, map_location="cuda:0"))
 	model.to(device)
 
 	# Set model to the evaluation mode
 	model.eval()
 
 	# Setup dataset
+	# Need to be careful here. This isn't perfect.
+	# I'm assuming that the dataset isn't changing between training and inference time
 	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
-
-	# TODO - parameterize this
 	if 1:
-		dbfile = open('./results/04_11_2021_19_43_53/test_ds.pkl', 'rb')     
+		dbfile = open(os.path.join(args.model_dir, 'test_ds.pkl'), 'rb')
 		test_ds = pickle.load(dbfile)
+		#test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=1)
 		test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, num_workers=1)
 	else:
+		# Just use the defaults
 		test_loader = DataLoader(bee_ds, batch_size=1, shuffle=True, num_workers=1)
 
-
-	while True:
+	for _ in range(len(test_ds)):
 		inputs, labels = next(iter(test_loader))
 		inputs = inputs.to(device)
 		labels = labels.to(device)
@@ -162,11 +169,15 @@ if __name__ == "__main__":
 		input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
 		#helper.show_image("input_img", input_img)
 
+		start_time = time.time()
 		pred = model(inputs)
-		# The loss functions include the sigmoid function.
+		# I think sigmoid isn't included in the normal forward pass b/c of the custom BCE+Dice loss
 		pred = F.sigmoid(pred)
 		pred = pred.data.cpu().numpy()
 		pred = pred.squeeze()
+		if ENABLE_TIMING:
+			print("model forward time: %s s" % (time.time() - start_time))
+			# model forward time: 0.04796314239501953 s
 
 		# Threshold heatmap to create binary prediction
 		#pred = filter_pred(pred)
@@ -175,10 +186,15 @@ if __name__ == "__main__":
 		pred_norm = cv2.normalize(src=pred, dst=None, \
 			alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 		#pred_norm = pred * 255
-		helper.show_image("pred", pred_norm)
+		#helper.show_image("pred", pred_norm)
+		cv2.imshow("pred", pred_norm)
+		print(np.max(pred_norm))
 
-		# TODO - get this to work
+		start_time = time.time()
 		centroids = get_centroids(pred)
+		if ENABLE_TIMING:
+			print("get_centroids time: %s s" % (time.time() - start_time))
+			# get_centroids time: 0.009763717651367188 s
 
 		# Convert pred to color
 		pred_norm_color = cv2.cvtColor(pred_norm, cv2.COLOR_GRAY2BGR)
@@ -189,7 +205,8 @@ if __name__ == "__main__":
 
 		# Create a colored overlay
 		overlay = cv2.addWeighted(input_img, 0.5, color_mask, 0.5, 0.0, dtype=cv2.CV_8UC3)
-		helper.show_image("Heatmap Overlay", overlay)
+		#helper.show_image("Heatmap Overlay", overlay)
+		cv2.imshow("Heatmap Overlay", overlay)
 
 		#stacked = np.hstack((pred_norm_color, overlay))
 		#helper.show_image("pred", stacked)
@@ -199,3 +216,13 @@ if __name__ == "__main__":
 			for centroid in centroids:
 				cv2.circle(input_img, tuple((centroid[1],centroid[0])), 5, (0,255,0), cv2.FILLED)
 			helper.show_image("Predictions", input_img)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
+    parser.add_argument('--model_dir', default='./results/latest', type=str, help='results/<datetime> dir')
+    parser.set_defaults(func=inference)
+    args = parser.parse_args()
+    args.func(args)
