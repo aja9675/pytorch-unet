@@ -34,7 +34,7 @@ current_datetime = datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
 def calc_loss(pred, target, metrics, bce_weight=0.5):
 	bce = F.binary_cross_entropy_with_logits(pred, target)
 
-	pred = F.sigmoid(pred)
+	pred = torch.sigmoid(pred)
 	dice = dice_loss(pred, target)
 
 	loss = bce * bce_weight + dice * (1 - bce_weight)
@@ -56,7 +56,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
-	checkpoint_path = os.path.join(out_dir, current_datetime, "checkpoint.pth")
+	checkpoint_dir = os.path.join(out_dir, current_datetime)
 
 	for epoch in range(num_epochs):
 		print('Epoch {}/{}'.format(epoch, num_epochs - 1))
@@ -78,11 +78,9 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 			metrics = defaultdict(float)
 			epoch_samples = 0
 
-			for inputs, labels in dataloaders[phase]:
+			for i, (inputs, labels) in enumerate(dataloaders[phase]):
 				inputs = inputs.to(device)
 				labels = labels.to(device)
-				#print(inputs.dtype)
-				#print(labels.dtype)
 
 				# zero the parameter gradients
 				optimizer.zero_grad()
@@ -103,6 +101,9 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 				# statistics
 				epoch_samples += inputs.size(0)
 
+				if i % 100:
+					print_metrics(metrics, epoch_samples, phase)
+
 			print_metrics(metrics, epoch_samples, phase)
 			epoch_loss = metrics['loss'] / epoch_samples
 
@@ -112,8 +113,14 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 				best_loss = epoch_loss
 				best_model_wts = copy.deepcopy(model.state_dict())
 
-				print("saving best model to: ", checkpoint_path)
-				torch.save(model.state_dict(), checkpoint_path)
+				print("saving best model to: ", checkpoint_dir)
+				torch.save(model.state_dict(), os.path.join(checkpoint_dir, "best_model.pth"))
+
+		#if epoch % 10 and True:
+		if epoch % 1 and True:
+			checkpoint_filename = 'checkpoint_' + str(epoch) + '.pth'
+			print("Saving epoch checkpoint: ", checkpoint_filename)
+			torch.save(model.state_dict(), os.path.join(checkpoint_dir, checkpoint_filename))
 
 		time_elapsed = time.time() - since
 		print('{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
@@ -145,7 +152,8 @@ def pickle_datasets(out_dir, train, val, test):
 
 def train_bees(args):
 	batch_size = 4
-	num_epochs = 25
+	num_epochs = 50
+	learning_rate = 1e-4
 
 	# Setup dataset
 	bee_ds = BeePointDataset(root_dir=args.data_dir)
@@ -167,9 +175,9 @@ def train_bees(args):
 	pickle_datasets(args.out_dir, train_dataset, val_dataset, test_dataset)
 
 	# Create dataloaders
-	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=0)
-	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
-	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0)
+	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=10)
+	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=10)
+	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=10)
 	dataloaders = { 'train': train_loader, 'val': val_loader }
 
 	# Note that len(dataloader) won't work, see:
@@ -192,14 +200,14 @@ def train_bees(args):
 	model = ResNetUNet(num_class).to(device)
 
 	# check keras-like model summary using torchsummary
-	#summary(model, input_size=(3, 224, 224))
+	summary(model, input_size=(3, 544, 960))
 
 	# freeze backbone layers
 	#for l in model.base_layers:
 	#    for param in l.parameters():
 	#        param.requires_grad = False
 
-	optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+	optimizer_ft = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 
 	exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=30, gamma=0.1)
 

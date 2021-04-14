@@ -24,7 +24,7 @@ disp_size = (1920, 1080) # 1080p
 class BeePointDataset(Dataset):
 	"""Bee point dataset."""
 
-	def __init__(self, root_dir, sigma=2.5, enable_augmentations=False):
+	def __init__(self, root_dir, sigma=1.75, enable_augmentations=False):
 		"""
 		Args:
 			root_dir (string): Directory with all the images.
@@ -46,7 +46,11 @@ class BeePointDataset(Dataset):
 						self.labels_file_list.append(os.path.join(root, file))
 		#self.input_size = (720, 1280) # (rows, cols) - 720p
 		# Hacking this so the autoencoder spatial dimensions line up cleanly
-		self.input_size = (736, 1280) # (rows, cols) - 720p
+		# Both dimensions need to be evenly divisible by 32
+		#self.input_size = (736, 1280) # (rows, cols) - 720p
+		# 720p had very good results but was probably unnecessarily large
+		# Trying to downsize and maintain aspect ration the best I can
+		self.input_size = (544, 960) # (rows, cols)
 		#self.input_size = (126, 224)
 		self.sigma = sigma
 
@@ -125,10 +129,10 @@ class BeePointDataset(Dataset):
 		if 1:
 			# This assert will get triggered if you update input resolution and force
 			# you to re-evaluate the Gaussian that represents GT instances
-			assert self.input_size == (736, 1280), \
+			assert self.input_size == (544, 960), \
 				"You changed input resolution, is your Gaussian window and sigma still valid?"
 			# With (736, 1280) a bee width is ~17 pix
-			mask = cv2.GaussianBlur(mask, ksize=(17,17), sigmaX=self.sigma)
+			mask = cv2.GaussianBlur(mask, ksize=(13,13), sigmaX=self.sigma)
 			if 0:
 				show_mask = deepcopy(mask)
 				show_mask = cv2.normalize(src=show_mask, dst=None, \
@@ -176,7 +180,7 @@ if __name__ == "__main__":
 	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images')
 
 	#for i in range(len(bee_ds)):
-	for i in range(4):
+	for i in range(len(bee_ds)):
 		idx = random.randrange(0, len(bee_ds))
 		sample = bee_ds[idx]
 		visualize_bee_points(*sample)
