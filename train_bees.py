@@ -193,23 +193,19 @@ def train_bees(args):
 		pickle_datasets(out_dir, train_dataset, val_dataset, test_dataset)
 
 	# Create dataloaders
-	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+	train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True,
 								num_workers=10, collate_fn=helper.bee_collate_fn)
-	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+	val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, drop_last=True,
 								num_workers=10, collate_fn=helper.bee_collate_fn)
-	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
-								num_workers=10, collate_fn=helper.bee_collate_fn)
+	#test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, drop_last=True,
+	#							num_workers=10, collate_fn=helper.bee_collate_fn)
 	dataloaders = { 'train': train_loader, 'val': val_loader }
-
-	# Note that len(dataloader) won't work, see:
-	#https://pytorch.org/docs/stable/data.html#module-torch.utils.data
 
 	if 0:
 		# Verify dataloader is working
 		for i_batch, sample_batched in enumerate(val_loader):
 			for i in range(batch_size):
 				visualize_bee_points(sample_batched[0][i], sample_batched[1][i])
-
 
 	# Train
 
