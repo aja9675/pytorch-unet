@@ -54,3 +54,9 @@ def masks_to_colorimg(masks):
                 colorimg[y,x,:] = np.mean(selected_colors, axis=0)
 
     return colorimg.astype(np.uint8)
+
+def bee_collate_fn(batch):
+    data = [item[0] for item in batch]
+    mask = [item[1] for item in batch]
+    labels = [item[2] for item in batch]
+    return [data, mask, labels]

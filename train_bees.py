@@ -23,6 +23,7 @@ from model import ResNetUNet
 from torchsummary import summary
 import pickle
 import argparse
+from icecream import ic
 
 # My custom dataset
 from bee_dataloader import BeePointDataset, visualize_bee_points
@@ -52,7 +53,7 @@ def print_metrics(metrics, epoch_samples, phase):
 
 	print("{}: {}".format(phase, ", ".join(outputs)))
 
-def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, out_dir):
+def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, out_dir, no_results):
 	best_model_wts = copy.deepcopy(model.state_dict())
 	best_loss = 1e10
 
@@ -78,9 +79,12 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 			metrics = defaultdict(float)
 			epoch_samples = 0
 
-			for i, (inputs, labels) in enumerate(dataloaders[phase]):
-				inputs = inputs.to(device)
-				labels = labels.to(device)
+			# Dataloader returns both mask and GT points
+			# Currently, GT points are only used at test time for generating metrics
+			for i, (inputs, labels, points) in enumerate(dataloaders[phase]):
+				inputs = torch.stack(inputs).to(device)
+				labels = torch.stack(labels).to(device)
+				# points are not used!!
 
 				# zero the parameter gradients
 				optimizer.zero_grad()
@@ -108,7 +112,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 			epoch_loss = metrics['loss'] / epoch_samples
 
 			# deep copy the model
-			if phase == 'val' and epoch_loss < best_loss:
+			if phase == 'val' and epoch_loss < best_loss and not no_results:
 				print("saving best model")
 				best_loss = epoch_loss
 				best_model_wts = copy.deepcopy(model.state_dict())
@@ -117,7 +121,7 @@ def train_model(device, model, optimizer, scheduler, dataloaders, num_epochs, ou
 				torch.save(model.state_dict(), os.path.join(checkpoint_dir, "best_model.pth"))
 
 		#if epoch % 10 and True:
-		if epoch % 1 == 0 and True:
+		if epoch % 1 == 0 and not no_results:
 			checkpoint_filename = 'checkpoint_' + str(epoch) + '.pth'
 			print("Saving epoch checkpoint: ", checkpoint_filename)
 			torch.save(model.state_dict(), os.path.join(checkpoint_dir, checkpoint_filename))
@@ -153,6 +157,9 @@ def train_bees(args):
 	num_epochs = 50
 	learning_rate = 1e-4
 
+	if args.no_results:
+		print("WARNING. --no_results specified. Not saving any results.")
+
 	# Setup dataset
 	bee_ds = BeePointDataset(root_dir=args.data_dir)
 	# Split dataset
@@ -169,31 +176,33 @@ def train_bees(args):
 	#print(val_dataset.indices)
 	#print(test_dataset.indices)
 
-	out_dir = os.path.abspath(args.out_dir)
-	# Delete existing 'results/latest' symlink if it exists
-	latest_symlink = os.path.join(out_dir, 'latest')
-	if os.path.exists(latest_symlink):
-		os.remove(latest_symlink)
+	if not args.no_results:
+		out_dir = os.path.abspath(args.out_dir)
+		# Delete existing 'results/latest' symlink if it exists
+		latest_symlink = os.path.join(out_dir, 'latest')
+		if os.path.exists(latest_symlink):
+			os.remove(latest_symlink)
 
-	# Create a new results directiory
-	out_dir = os.path.join(out_dir, current_datetime)
-	if not os.path.exists(out_dir):
-		os.mkdir(out_dir)
-	os.symlink(out_dir, latest_symlink)
-	sys.exit(1)
+		# Create a new results directiory
+		out_dir = os.path.join(out_dir, current_datetime)
+		if not os.path.exists(out_dir):
+			os.mkdir(out_dir)
+		os.symlink(out_dir, latest_symlink)
 
-	# Pickle our dataset lists so we can resume from them later (namely for testing)
-	pickle_datasets(out_dir, train_dataset, val_dataset, test_dataset)
+		# Pickle our dataset lists so we can resume from them later (namely for testing)
+		pickle_datasets(out_dir, train_dataset, val_dataset, test_dataset)
 
 	# Create dataloaders
-	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,  num_workers=10)
-	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=10)
-	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=10)
+	train_loader = DataLoader(train_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+								num_workers=10, collate_fn=helper.bee_collate_fn)
+	val_loader = DataLoader(val_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+								num_workers=10, collate_fn=helper.bee_collate_fn)
+	test_loader = DataLoader(test_dataset.dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+								num_workers=10, collate_fn=helper.bee_collate_fn)
 	dataloaders = { 'train': train_loader, 'val': val_loader }
 
 	# Note that len(dataloader) won't work, see:
 	#https://pytorch.org/docs/stable/data.html#module-torch.utils.data
-	#print(len(train_loader))
 
 	if 0:
 		# Verify dataloader is working
@@ -211,7 +220,7 @@ def train_bees(args):
 	model = ResNetUNet(num_class).to(device)
 
 	# check keras-like model summary using torchsummary
-	summary(model, input_size=(3, 544, 960))
+	#summary(model, input_size=(3, 544, 960))
 
 	# freeze backbone layers
 	#for l in model.base_layers:
@@ -222,7 +231,7 @@ def train_bees(args):
 
 	exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=30, gamma=0.1)
 
-	model = train_model(device, model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs, args.out_dir)
+	model = train_model(device, model, optimizer_ft, exp_lr_scheduler, dataloaders, num_epochs, args.out_dir, args.no_results)
 
 
 if __name__ == "__main__":
@@ -230,6 +239,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--out_dir', default='./results', type=str, help='Results dir (will create a new folder from current datetime')
+    parser.add_argument('--no_results', action='store_true', default=False, help='Dont save results (for debugging)')
     parser.set_defaults(func=train_bees)
     args = parser.parse_args()
     args.func(args)

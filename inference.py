@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import os
 import torch
 import math
@@ -26,13 +27,12 @@ from skimage.feature import peak_local_max
 
 
 # For inference timing of different components
-ENABLE_TIMING = True
+ENABLE_TIMING = False
 
 
 def normalize_uint8(img):
 	return cv2.normalize(src=img, dst=None, 
 		alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
 
 '''
 Calcuate centroids from my heatmap
@@ -82,15 +82,19 @@ def inference(args):
 		dbfile = open(os.path.join(args.model_dir, 'test_ds.pkl'), 'rb')
 		test_ds = pickle.load(dbfile)
 		#test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=1)
-		test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, num_workers=1)
+		test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, num_workers=1, collate_fn=helper.bee_collate_fn)
 	else:
 		# Just use the defaults
 		test_loader = DataLoader(bee_ds, batch_size=1, shuffle=True, num_workers=1)
 
 	for _ in range(len(test_ds)):
-		inputs, labels = next(iter(test_loader))
+		# Because we have variable length points coming from Dataloader, there's some extra overhead
+		# in managing the input and GT data. See collate_fn().
+		inputs, mask, points = next(iter(test_loader))
+		inputs = torch.unsqueeze(inputs[0], 0)
+		points = points[0]
 		inputs = inputs.to(device)
-		labels = labels.to(device)
+
 		# Convert to viewable image
 		input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
 		input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
@@ -115,7 +119,7 @@ def inference(args):
 		#pred_norm = pred * 255
 		#helper.show_image("pred", pred_norm)
 		cv2.imshow("pred", pred_norm)
-		print(np.max(pred_norm))
+		#print(np.max(pred_norm))
 
 		start_time = time.time()
 		centroids = get_centroids(pred)
@@ -140,8 +144,11 @@ def inference(args):
 
 		draw = True
 		if draw and len(centroids) > 0:
+			if 1: # Draw GT
+				for point in points:
+					cv2.circle(input_img, tuple((point[1],point[0])), 5, (0,255,0), cv2.FILLED)
 			for centroid in centroids:
-				cv2.circle(input_img, tuple((centroid[1],centroid[0])), 5, (0,255,0), cv2.FILLED)
+				cv2.circle(input_img, tuple((centroid[1],centroid[0])), 5, (0,0,255), cv2.FILLED)
 			helper.show_image("Predictions", input_img)
 
 

@@ -141,11 +141,11 @@ class BeePointDataset(Dataset):
 
 		image, mask = self.__transform(image, mask)
 
-		sample = [image, mask]
+		sample = [image, mask, points]
 		return sample
 
 
-def visualize_bee_points(image, mask):
+def visualize_bee_points(image, mask, points):
 	# Need to transpose from (3, 720, 1280) tensor to (720, 1280, 3) image
 	image = np.asarray(image).transpose(1,2,0)
 	mask = np.asarray(mask).squeeze().transpose(0,1)
