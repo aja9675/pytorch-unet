@@ -33,77 +33,6 @@ def normalize_uint8(img):
 	return cv2.normalize(src=img, dst=None, 
 		alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-def reverse_transform(inp):
-    inp = inp.numpy().transpose((1, 2, 0))
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    inp = std * inp + mean
-    inp = np.clip(inp, 0, 1)
-    inp = (inp * 255).astype(np.uint8)
-
-    return inp
-
-def filter_pred(pred):
-	filtered = np.zeros_like(pred)
-	filtered = np.where(pred > 5, 1, 0)
-	return filtered
-
-
-def mean_shift_centroids(pred):
-	# Compute clustering with MeanShift
-
-	if 0:
-		# The following bandwidth can be automatically detected using
-		bandwidth = estimate_bandwidth(pred, quantile=0.2, n_samples=500)
-	else:
-		bandwidth = 2
-
-	#ms = MeanShift(bandwidth=bandwidth, bin_seeding=True)
-	ms = MeanShift(bandwidth=bandwidth, bin_seeding=False)
-	ms.fit(pred)
-	labels = ms.labels_
-	cluster_centers = ms.cluster_centers_
-
-	labels_unique = np.unique(labels)
-	n_clusters_ = len(labels_unique)
-
-	print("number of estimated clusters : %d" % n_clusters_)
-
-	if len(cluster_centers) > 0:
-		pred_color = cv2.cvtColor(pred_norm, cv2.COLOR_GRAY2BGR)
-		for centroid in cluster_centers:
-			print(centroid)
-			print(centroid.shape)
-			cv2.circle(pred_color, centroid, 5, (0,255,0), cv2.FILLED)
-		helper.show_image("pred_color", pred_color)
-
-
-# Test function for playing around with various algorithms
-def get_centroids_test(pred):
-
-	# Try mean shift
-	#centroids = mean_shift_centroids(pred)
-	# Nope
-
-	## Try determinant of hessian
-	#from skimage.feature import hessian_matrix_det
-	##hess = hessian_matrix_det(pred_norm, sigma=1, approximate=True)
-	#hess = hessian_matrix_det(pred_norm, sigma=3, approximate=False)
-	## Assume no local minima so I don't have to check fxx
-	## Zero out everyone <= 0 (saddle points)
-	##hess = np.where(hess <=0, 0, hess)
-	## Set all points > 0 to 255
-	#hess_norm = np.uint8(np.where(hess > 0, 255, 0))
-	##hess_norm = cv2.normalize(src=hess, dst=None, \
-	##	alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-	#helper.show_image("hess", hess_norm)
-
-	#import scipy
-	##ret = scipy.ndimage.filters.maximum_filter(pred, size=None, footprint=None, output=None, mode='reflect', cval=0.0, origin=0)
-	#max_filtered = scipy.ndimage.filters.maximum_filter(pred, size=1)
-	#max_filtered = normalize_uint8(max_filtered)
-	#helper.show_image("max_filtered", max_filtered)
-	return
 
 '''
 Calcuate centroids from my heatmap
@@ -164,9 +93,8 @@ def inference(args):
 		labels = labels.to(device)
 		# Convert to viewable image
 		input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
-		input_img = cv2.normalize(src=input_img, dst=None, \
-			alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 		input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
+		input_img = normalize_uint8(input_img)
 		#helper.show_image("input_img", input_img)
 
 		start_time = time.time()
@@ -183,8 +111,7 @@ def inference(args):
 		#pred = filter_pred(pred)
 
 		# Normalize for viewing
-		pred_norm = cv2.normalize(src=pred, dst=None, \
-			alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+		pred_norm = normalize_uint8(pred)
 		#pred_norm = pred * 255
 		#helper.show_image("pred", pred_norm)
 		cv2.imshow("pred", pred_norm)
