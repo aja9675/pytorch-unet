@@ -20,11 +20,12 @@ import time
 import argparse
 
 # For clustering & centroid detection
-# Mean shift?
-#from sklearn.cluster import MeanShift, estimate_bandwidth
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 
+np.set_printoptions(linewidth=240)
 
 # For inference timing of different components
 ENABLE_TIMING = False
@@ -61,9 +62,7 @@ def get_centroids(pred):
 
 	return centroids
 
-
-def inference(args):
-
+def setup_model_dataloader(args, batch_size):
 	num_class = 1
 	model = ResNetUNet(num_class)
 	device = torch.device("cuda")
@@ -77,42 +76,51 @@ def inference(args):
 	# Setup dataset
 	# Need to be careful here. This isn't perfect.
 	# I'm assuming that the dataset isn't changing between training and inference time
-	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
+	bee_ds = BeePointDataset(root_dir=args.data_dir)
 	if 1:
 		dbfile = open(os.path.join(args.model_dir, 'test_ds.pkl'), 'rb')
 		test_ds = pickle.load(dbfile)
 		#test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=1)
-		test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, num_workers=1, collate_fn=helper.bee_collate_fn)
+		test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=1, collate_fn=helper.bee_collate_fn)
 	else:
-		# Just use the defaults
-		test_loader = DataLoader(bee_ds, batch_size=1, shuffle=True, num_workers=1)
+		# Just use the defaults in the bee_ds
+		test_loader = DataLoader(bee_ds, batch_size=batch_size, shuffle=True, num_workers=1, collate_fn=helper.bee_collate_fn)
 
-	for _ in range(len(test_ds)):
+	return model, test_loader, device
+
+def model_forward(model, batch_imgs, device):
+	batch_imgs = batch_imgs.to(device)
+
+	start_time = time.time()
+	pred = model(batch_imgs)
+	# I think sigmoid isn't included in the normal forward pass b/c of the custom BCE+Dice loss
+	pred = torch.sigmoid(pred)
+	pred = pred.data.cpu().numpy()
+	pred = pred.squeeze()
+	if ENABLE_TIMING:
+		print("model forward time: %s s" % (time.time() - start_time))
+		# model forward time: 0.04796314239501953 s
+	return pred
+
+
+
+def inference(args):
+
+	model, dataloder, device = setup_model_dataloader(args, batch_size=1)
+
+	for _ in range(len(dataloder)):
 		# Because we have variable length points coming from Dataloader, there's some extra overhead
 		# in managing the input and GT data. See collate_fn().
-		inputs, mask, points = next(iter(test_loader))
+		inputs, mask, points = next(iter(dataloder))
 		inputs = torch.unsqueeze(inputs[0], 0)
 		points = points[0]
-		inputs = inputs.to(device)
+		pred = model_forward(model, inputs, device)
 
-		# Convert to viewable image
+		# For visualization, convert to viewable image
 		input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
 		input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
 		input_img = normalize_uint8(input_img)
 		#helper.show_image("input_img", input_img)
-
-		start_time = time.time()
-		pred = model(inputs)
-		# I think sigmoid isn't included in the normal forward pass b/c of the custom BCE+Dice loss
-		pred = F.sigmoid(pred)
-		pred = pred.data.cpu().numpy()
-		pred = pred.squeeze()
-		if ENABLE_TIMING:
-			print("model forward time: %s s" % (time.time() - start_time))
-			# model forward time: 0.04796314239501953 s
-
-		# Threshold heatmap to create binary prediction
-		#pred = filter_pred(pred)
 
 		# Normalize for viewing
 		pred_norm = normalize_uint8(pred)
@@ -152,11 +160,105 @@ def inference(args):
 			helper.show_image("Predictions", input_img)
 
 
+'''
+Find the closest matching points in pred and GT
+Treats the matching problem as a bipartite graph minimization
+This ensures we have the closest possible matches for all points
+'''
+def calculate_pairs(pred_pts, gt_pts, pixel_threshold=10):
+	ic("calculate_pairs")
+	ic(gt_pts)
+	ic(pred_pts)
+
+	# Create a cost matrix consisting of all possible matches
+	# cdist returns the euclidean distance for all pairs of gt and pred pts
+	cdist_matrix = cdist(gt_pts, pred_pts)
+	ic(cdist_matrix)
+
+	# Perform minimum weight matching
+	# The linear sum assignment problem is also known as minimum weight matching in bipartite graphs
+	row_ind, col_ind = linear_sum_assignment(cdist_matrix)
+	pairs = list(zip(row_ind, col_ind))
+	ic(pairs)
+
+	# Eliminate pairs > pixel_threshold
+	filtered_pairs = []
+	for pair in pairs:
+		if cdist_matrix[pair] < pixel_threshold:
+			filtered_pairs.append(pair)
+	ic(filtered_pairs)
+
+	return filtered_pairs
+
+def calculate_stats(pred_pts, gt_pts, pairs):
+	# True positives - just the number of good pairs
+	sample_tp = len(pairs)
+	# False positives - predictions that don't have a pair
+	sample_fp = len(pred_pts)-len(pairs)
+	# False negatives - gt_pts that don't have a pair
+	sample_fn = len(gt_pts)-len(pairs)
+	return sample_tp, sample_fp, sample_fn
+
+def test(args):
+	debug = False
+
+	model, dataloder, device = setup_model_dataloader(args, batch_size=1)
+
+	num_tp = 0
+	num_fp = 0
+	num_fn = 0
+
+	for i in range(len(dataloder)):
+		inputs, mask, points = next(iter(dataloder))
+		inputs = torch.unsqueeze(inputs[0], 0)
+		points = points[0]
+		# Forward pass
+		pred = model_forward(model, inputs, device)
+		# Get centroids from resulting heatmap
+		centroids = get_centroids(pred)
+
+		# Compare pred pts to GT
+		pairs = calculate_pairs(centroids, points)
+
+		if len(pairs) == 0:
+			print("No matches found")
+			continue
+
+		# Calculate stats on the predictions
+		sample_tp, sample_fp, sample_fn = calculate_stats(centroids, points, pairs)
+		num_tp += sample_tp
+		num_fp += sample_fp
+		num_fn += sample_fn
+
+		if debug:
+			# For visualization, convert to viewable image
+			input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
+			input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
+			input_img = normalize_uint8(input_img)
+			#helper.show_image("input_img", input_img)
+
+		if i == 10:
+			break
+
+	ic("Confusion matrix:")
+	conf_mat_id = np.array([["TP", "FP"],["FN", "TN"]])
+	ic(conf_mat_id)
+	conf_mat = np.array([[num_tp, num_fp],[num_fn,0]])
+	ic(conf_mat)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--model_dir', default='./results/latest', type=str, help='results/<datetime> dir')
-    parser.set_defaults(func=inference)
+
+    subparsers = parser.add_subparsers()
+    parser_infer = subparsers.add_parser('infer')
+    parser_infer.set_defaults(func=inference)
+    parser_test = subparsers.add_parser('test')
+    parser_test.set_defaults(func=test)
+
     args = parser.parse_args()
     args.func(args)
