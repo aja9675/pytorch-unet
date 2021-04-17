@@ -233,7 +233,7 @@ def train_bees(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
+    parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--out_dir', default='./results', type=str, help='Results dir (will create a new folder from current datetime')
     parser.add_argument('--no_results', action='store_true', default=False, help='Dont save results (for debugging)')
     parser.set_defaults(func=train_bees)

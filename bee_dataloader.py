@@ -177,7 +177,7 @@ if __name__ == "__main__":
 
 	#bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523', enable_augmentations=True)
 	#bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images/20180522_173523')
-	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/images')
+	bee_ds = BeePointDataset(root_dir='/data/datasets/bees/ak_bees/ak_bees/images')
 
 	#for i in range(len(bee_ds)):
 	for i in range(len(bee_ds)):
