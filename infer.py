@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 
+'''
+This script either runs inference and visualizes results. Or runs evaluations on the test set.
+
+The following will just run inference and show GT (Green) and predictions (Red).
+./infer.py infer
+
+Running the following will visualize results:
+infer.py --debug test
+
+Visualization legend:
+Blue - GT True Positives
+Yellow - Pred True Positives
+Green - GT False Negatives
+Red - Pred False Positives
+'''
+
 import sys
 import os
 import torch
@@ -166,27 +182,26 @@ Treats the matching problem as a bipartite graph minimization
 This ensures we have the closest possible matches for all points
 '''
 def calculate_pairs(pred_pts, gt_pts, pixel_threshold=10):
-	ic("calculate_pairs")
-	ic(gt_pts)
-	ic(pred_pts)
+	#ic(gt_pts)
+	#ic(pred_pts)
 
 	# Create a cost matrix consisting of all possible matches
 	# cdist returns the euclidean distance for all pairs of gt and pred pts
 	cdist_matrix = cdist(gt_pts, pred_pts)
-	ic(cdist_matrix)
+	#ic(cdist_matrix)
 
 	# Perform minimum weight matching
 	# The linear sum assignment problem is also known as minimum weight matching in bipartite graphs
 	row_ind, col_ind = linear_sum_assignment(cdist_matrix)
 	pairs = list(zip(row_ind, col_ind))
-	ic(pairs)
+	#ic(pairs)
 
 	# Eliminate pairs > pixel_threshold
 	filtered_pairs = []
 	for pair in pairs:
 		if cdist_matrix[pair] < pixel_threshold:
 			filtered_pairs.append(pair)
-	ic(filtered_pairs)
+	#ic(filtered_pairs)
 
 	return filtered_pairs
 
@@ -200,8 +215,6 @@ def calculate_stats(pred_pts, gt_pts, pairs):
 	return sample_tp, sample_fp, sample_fn
 
 def test(args):
-	debug = False
-
 	model, dataloder, device = setup_model_dataloader(args, batch_size=1)
 
 	num_tp = 0
@@ -209,50 +222,90 @@ def test(args):
 	num_fn = 0
 
 	for i in range(len(dataloder)):
-		inputs, mask, points = next(iter(dataloder))
+		inputs, mask, gt_points = next(iter(dataloder))
 		inputs = torch.unsqueeze(inputs[0], 0)
-		points = points[0]
+		gt_points = gt_points[0]
 		# Forward pass
 		pred = model_forward(model, inputs, device)
 		# Get centroids from resulting heatmap
-		centroids = get_centroids(pred)
+		pred_pts = get_centroids(pred)
 
 		# Compare pred pts to GT
-		pairs = calculate_pairs(centroids, points)
+		pairs = calculate_pairs(pred_pts, gt_points, args.threshold)
 
-		if len(pairs) == 0:
+		if len(pairs) > 0:
+			# Calculate stats on the predictions
+			sample_tp, sample_fp, sample_fn = calculate_stats(pred_pts, gt_points, pairs)
+			num_tp += sample_tp
+			num_fp += sample_fp
+			num_fn += sample_fn
+			if args.debug:
+				ic("TP: ", sample_tp)
+				ic("FP: ", sample_fp)
+				ic("FN: ", sample_fn)
+		elif args.debug:
 			print("No matches found")
-			continue
 
-		# Calculate stats on the predictions
-		sample_tp, sample_fp, sample_fn = calculate_stats(centroids, points, pairs)
-		num_tp += sample_tp
-		num_fp += sample_fp
-		num_fn += sample_fn
-
-		if debug:
+		if args.debug:
 			# For visualization, convert to viewable image
 			input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
 			input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
 			input_img = normalize_uint8(input_img)
 			#helper.show_image("input_img", input_img)
 
-		if i == 10:
-			break
+			# Draw GT in green
+			for gt_pt in gt_points:
+				cv2.circle(input_img, tuple((gt_pt[1],gt_pt[0])), 5, (0,255,0), cv2.FILLED)
+			# Draw all preds in red
+			for pred_pt in pred_pts:
+				cv2.circle(input_img, tuple((pred_pt[1],pred_pt[0])), 5, (0,0,255), cv2.FILLED)
+			# Draw matched preds in yellow, and matched GTs in blue.
+			# This will overwrite the red spots for good matches.
+			# Note that pairs looks like: [(0, 2), (2, 1), (3, 3), (4, 4), (5, 0)]
+			# Where each entry is (gt_idx, pred_idx)
+			for pair in pairs:
+				gt_pt = gt_points[pair[0]]
+				pred_pt = pred_pts[pair[1]]
+				cv2.circle(input_img, tuple((gt_pt[1],gt_pt[0])), 5, (255,0,0), cv2.FILLED)
+				cv2.circle(input_img, tuple((pred_pt[1],pred_pt[0])), 5, (0,255,255), cv2.FILLED)
+
+			cv2.namedWindow("input_img")
+			helper.show_image("input_img", input_img)
+			print()
+
+
 
 	ic("Confusion matrix:")
 	conf_mat_id = np.array([["TP", "FP"],["FN", "TN"]])
 	ic(conf_mat_id)
 	conf_mat = np.array([[num_tp, num_fp],[num_fn,0]])
 	ic(conf_mat)
+	precision = num_tp / (num_tp + num_fp)
+	recall = num_tp / (num_tp + num_fn)
+	f1 = 2* precision * recall / (precision + recall)
+	ic("Precision: ", precision)
+	ic("Recall: ", recall)
+	ic("F1 Score: ", f1)
+
+
+	model_dir = os.path.abspath(args.model_dir)
+	result_file = os.path.join(model_dir, "results.txt")
+	with open(result_file, "w") as f:
+		f.write("Confusion matrix:\n")
+		f.writelines(str(conf_mat_id) + '\n')
+		f.writelines(str(conf_mat) + '\n')
+		f.writelines("Precision: %f\n" % precision)
+		f.writelines("Recall: %f\n" % recall)
+		f.writelines("F1 Score: %f\n" % f1)
+
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
-    parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--model_dir', default='./results/latest', type=str, help='results/<datetime> dir')
+    parser.add_argument('--debug', action='store_true', default=False, help='Enable debugging prints and vis')
+    parser.add_argument('-t', '--threshold', type=int, default=15, help='Enable debugging prints and vis')
 
     subparsers = parser.add_subparsers()
     parser_infer = subparsers.add_parser('infer')
@@ -262,3 +315,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args.func(args)
+
