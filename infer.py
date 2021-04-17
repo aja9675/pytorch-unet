@@ -19,7 +19,6 @@ Red - Pred False Positives
 import sys
 import os
 import torch
-import math
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from model import ResNetUNet
@@ -30,53 +29,17 @@ from icecream import ic
 # Custom helpers
 import helper
 # My custom dataset
-from bee_dataloader import BeePointDataset, visualize_bee_points
+from bee_dataloader import BeePointDataset
 import pickle
 import time
 import argparse
 
-# For clustering & centroid detection
-from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
-from scipy import ndimage as ndi
-from skimage.feature import peak_local_max
 
 np.set_printoptions(linewidth=240)
 
 # For inference timing of different components
 ENABLE_TIMING = False
 
-
-def normalize_uint8(img):
-	return cv2.normalize(src=img, dst=None, 
-		alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-'''
-Calcuate centroids from my heatmap
-skimage peak_local_max() is doing the work here. It works surprisingly well.
-'''
-def get_centroids(pred):
-	im = np.float32(pred)
-	# image_max is the dilation of im with a 20*20 structuring element
-	# It is used within peak_local_max function
-	if 0:
-		# Is this necessary???
-		# Looks like a bug in https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_peak_local_max.html#sphx-glr-auto-examples-segmentation-plot-peak-local-max-py
-		# because image_max isn't used??
-		image_max = ndi.maximum_filter(im, size=20, mode='constant')
-
-	# Comparison between image_max and im to find the coordinates of local maxima
-	centroids = peak_local_max(im, min_distance=20)
-	#ic(cluster_centers)
-
-	draw = False
-	if draw and len(centroids) > 0:
-		pred_color = cv2.cvtColor(pred_norm, cv2.COLOR_GRAY2BGR)
-		for centroid in centroids:
-			cv2.circle(pred_color, tuple((centroid[1],centroid[0])), 5, (0,255,0), cv2.FILLED)
-		helper.show_image("pred_color", pred_color)
-
-	return centroids
 
 def setup_model_dataloader(args, batch_size):
 	num_class = 1
@@ -104,19 +67,7 @@ def setup_model_dataloader(args, batch_size):
 
 	return model, test_loader, device
 
-def model_forward(model, batch_imgs, device):
-	batch_imgs = batch_imgs.to(device)
 
-	start_time = time.time()
-	pred = model(batch_imgs)
-	# I think sigmoid isn't included in the normal forward pass b/c of the custom BCE+Dice loss
-	pred = torch.sigmoid(pred)
-	pred = pred.data.cpu().numpy()
-	pred = pred.squeeze()
-	if ENABLE_TIMING:
-		print("model forward time: %s s" % (time.time() - start_time))
-		# model forward time: 0.04796314239501953 s
-	return pred
 
 
 
@@ -130,23 +81,23 @@ def inference(args):
 		inputs, mask, points = next(iter(dataloder))
 		inputs = torch.unsqueeze(inputs[0], 0)
 		points = points[0]
-		pred = model_forward(model, inputs, device)
+		pred = helper.model_forward(model, inputs, device, ENABLE_TIMING)
 
 		# For visualization, convert to viewable image
 		input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
 		input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
-		input_img = normalize_uint8(input_img)
+		input_img = helper.normalize_uint8(input_img)
 		#helper.show_image("input_img", input_img)
 
 		# Normalize for viewing
-		pred_norm = normalize_uint8(pred)
+		pred_norm = helper.normalize_uint8(pred)
 		#pred_norm = pred * 255
 		#helper.show_image("pred", pred_norm)
 		cv2.imshow("pred", pred_norm)
 		#print(np.max(pred_norm))
 
 		start_time = time.time()
-		centroids = get_centroids(pred)
+		centroids = helper.get_centroids(pred)
 		if ENABLE_TIMING:
 			print("get_centroids time: %s s" % (time.time() - start_time))
 			# get_centroids time: 0.009763717651367188 s
@@ -181,6 +132,8 @@ Find the closest matching points in pred and GT
 Treats the matching problem as a bipartite graph minimization
 This ensures we have the closest possible matches for all points
 '''
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
 def calculate_pairs(pred_pts, gt_pts, pixel_threshold=10):
 	#ic(gt_pts)
 	#ic(pred_pts)
@@ -226,9 +179,9 @@ def test(args):
 		inputs = torch.unsqueeze(inputs[0], 0)
 		gt_points = gt_points[0]
 		# Forward pass
-		pred = model_forward(model, inputs, device)
+		pred = helper.model_forward(model, inputs, device, ENABLE_TIMING)
 		# Get centroids from resulting heatmap
-		pred_pts = get_centroids(pred)
+		pred_pts = helper.get_centroids(pred)
 
 		# Compare pred pts to GT
 		pairs = calculate_pairs(pred_pts, gt_points, args.threshold)
@@ -250,7 +203,7 @@ def test(args):
 			# For visualization, convert to viewable image
 			input_img = inputs.cpu().numpy().squeeze().transpose(1,2,0)
 			input_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2BGR)
-			input_img = normalize_uint8(input_img)
+			input_img = helper.normalize_uint8(input_img)
 			#helper.show_image("input_img", input_img)
 
 			# Draw GT in green
