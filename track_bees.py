@@ -28,7 +28,20 @@ np.set_printoptions(linewidth=240)
 
 # For inference timing of different components
 ENABLE_TIMING = False
+# Visualization color
+VIS_COLOR = (0,0,255)
 
+'''
+Draw the 'tails' of the tracking system
+point_pairs is an array of arrays of points. Each entry represents a unique instance.
+'''
+def draw_tracking_lines(image, point_pairs):
+	# For each set of points
+	for pairs in point_pairs:
+		for pts in pairs:
+			# Draw a line from the previous to the current detected point
+			cv2.line(image, tuple((pts[0][1], pts[0][0])), tuple((pts[1][1], pts[1][0])), VIS_COLOR, 2)
+	return image
 
 def setup_model_dataloader(args, batch_size):
 	num_class = 1
@@ -73,7 +86,8 @@ def track_bees(args):
 	input_size = bee_ds.input_size
 	ic(bee_ds.input_size)
 
-
+	prev_pts = np.array([])
+	running_pairs = []
 	for frame_num in range(num_frames):
 
 		# Read frame from video
@@ -104,15 +118,31 @@ def track_bees(args):
 		# Get prediction centroids (predicted points)
 		pred_pts = helper.get_centroids(pred)
 
+		# Use bipartite graph minimum weight matching to associate detections
+		if len(pred_pts) > 0 and len(prev_pts) > 0 and not args.disable_tracking:
+			pairs = helper.calculate_pairs(prev_pts, pred_pts, args.threshold)
+			# Extract actual points based on indices in original arrays
+			point_pairs = []
+			for pair in pairs:
+				point_pairs.append((prev_pts[pair[1]], pred_pts[pair[0]]))
+
+			running_pairs.append(point_pairs)
+			if len(running_pairs) > args.tracker_frame_len:
+				running_pairs.pop(0)
+
+			# Draw the tracking lines
+			frame = draw_tracking_lines(frame, running_pairs)
+		elif len(running_pairs) > 0:
+			running_pairs.pop(0)
+
 		if len(pred_pts) > 0:
-			if 0: # Draw GT
-				for point in points:
-					cv2.circle(frame, tuple((point[1],point[0])), 5, (0,255,0), cv2.FILLED)
-			for pred_pts in pred_pts:
-				cv2.circle(frame, tuple((pred_pts[1],pred_pts[0])), 5, (0,0,255), cv2.FILLED)
+			for pred_pt in pred_pts:
+				cv2.circle(frame, tuple((pred_pt[1],pred_pt[0])), 5, VIS_COLOR, cv2.FILLED)
 
 		# Show results
 		helper.show_image("Predictions", frame, delay=frame_duration)
+
+		prev_pts = deepcopy(pred_pts)
 
 
 if __name__ == "__main__":
@@ -123,6 +153,9 @@ if __name__ == "__main__":
 	parser.add_argument('--debug', action='store_true', default=False, help='Enable debugging prints and vis')
 	parser.add_argument('--fps', type=int, default=0, help='Enable debugging prints and vis')
 	parser.add_argument('-r', '--rotate', type=int, default=0, help='Rotate [-90,90')
+	parser.add_argument('--disable_tracking', action='store_true', default=False, help='Disable tracking')
+	parser.add_argument('-t', '--threshold', type=int, default=50, help='Distance threshold for tracking')
+	parser.add_argument('--tracker_frame_len', type=int, default=15, help='Number of frames to show tracking visualization')
 	parser.set_defaults(func=track_bees)
 
 	args = parser.parse_args()

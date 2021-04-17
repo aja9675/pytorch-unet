@@ -116,3 +116,43 @@ def model_forward(model, batch_imgs, device, enable_timing):
         print("model forward time: %s s" % (time.time() - start_time))
         # model forward time: 0.04796314239501953 s
     return pred
+
+'''
+Find the closest matching points in pred and GT
+Treats the matching problem as a bipartite graph minimization
+This ensures we have the closest possible matches for all points
+'''
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
+def calculate_pairs(pred_pts, gt_pts, pixel_threshold=10):
+    #ic(gt_pts)
+    #ic(pred_pts)
+
+    # Create a cost matrix consisting of all possible matches
+    # cdist returns the euclidean distance for all pairs of gt and pred pts
+    cdist_matrix = cdist(gt_pts, pred_pts)
+    #ic(cdist_matrix)
+
+    # Perform minimum weight matching
+    # The linear sum assignment problem is also known as minimum weight matching in bipartite graphs
+    row_ind, col_ind = linear_sum_assignment(cdist_matrix)
+    pairs = list(zip(row_ind, col_ind))
+    #ic(pairs)
+
+    # Eliminate pairs > pixel_threshold
+    filtered_pairs = []
+    for pair in pairs:
+        if cdist_matrix[pair] < pixel_threshold:
+            filtered_pairs.append(pair)
+    #ic(filtered_pairs)
+
+    return filtered_pairs
+
+def calculate_stats(pred_pts, gt_pts, pairs):
+    # True positives - just the number of good pairs
+    sample_tp = len(pairs)
+    # False positives - predictions that don't have a pair
+    sample_fp = len(pred_pts)-len(pairs)
+    # False negatives - gt_pts that don't have a pair
+    sample_fn = len(gt_pts)-len(pairs)
+    return sample_tp, sample_fp, sample_fn

@@ -127,46 +127,6 @@ def inference(args):
 			helper.show_image("Predictions", input_img)
 
 
-'''
-Find the closest matching points in pred and GT
-Treats the matching problem as a bipartite graph minimization
-This ensures we have the closest possible matches for all points
-'''
-from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
-def calculate_pairs(pred_pts, gt_pts, pixel_threshold=10):
-	#ic(gt_pts)
-	#ic(pred_pts)
-
-	# Create a cost matrix consisting of all possible matches
-	# cdist returns the euclidean distance for all pairs of gt and pred pts
-	cdist_matrix = cdist(gt_pts, pred_pts)
-	#ic(cdist_matrix)
-
-	# Perform minimum weight matching
-	# The linear sum assignment problem is also known as minimum weight matching in bipartite graphs
-	row_ind, col_ind = linear_sum_assignment(cdist_matrix)
-	pairs = list(zip(row_ind, col_ind))
-	#ic(pairs)
-
-	# Eliminate pairs > pixel_threshold
-	filtered_pairs = []
-	for pair in pairs:
-		if cdist_matrix[pair] < pixel_threshold:
-			filtered_pairs.append(pair)
-	#ic(filtered_pairs)
-
-	return filtered_pairs
-
-def calculate_stats(pred_pts, gt_pts, pairs):
-	# True positives - just the number of good pairs
-	sample_tp = len(pairs)
-	# False positives - predictions that don't have a pair
-	sample_fp = len(pred_pts)-len(pairs)
-	# False negatives - gt_pts that don't have a pair
-	sample_fn = len(gt_pts)-len(pairs)
-	return sample_tp, sample_fp, sample_fn
-
 def test(args):
 	model, dataloder, device = setup_model_dataloader(args, batch_size=1)
 
@@ -184,11 +144,11 @@ def test(args):
 		pred_pts = helper.get_centroids(pred)
 
 		# Compare pred pts to GT
-		pairs = calculate_pairs(pred_pts, gt_points, args.threshold)
+		pairs = helper.calculate_pairs(pred_pts, gt_points, args.threshold)
 
 		if len(pairs) > 0:
 			# Calculate stats on the predictions
-			sample_tp, sample_fp, sample_fn = calculate_stats(pred_pts, gt_points, pairs)
+			sample_tp, sample_fp, sample_fn = helper.calculate_stats(pred_pts, gt_points, pairs)
 			num_tp += sample_tp
 			num_fp += sample_fp
 			num_fn += sample_fn
@@ -258,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='/data/datasets/bees/ak_bees/images', type=str, help='Dataset dir')
     parser.add_argument('--model_dir', default='./results/latest', type=str, help='results/<datetime> dir')
     parser.add_argument('--debug', action='store_true', default=False, help='Enable debugging prints and vis')
-    parser.add_argument('-t', '--threshold', type=int, default=15, help='Enable debugging prints and vis')
+    parser.add_argument('-t', '--threshold', type=int, default=15, help='Pixel distance threshold for matching')
 
     subparsers = parser.add_subparsers()
     parser_infer = subparsers.add_parser('infer')
