@@ -13,13 +13,14 @@ from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 
 
-def show_image(window, img):
+def show_image(window, img, delay=0):
     cv2.imshow(window, img)
 
     # Escape key will exit program
-    key = cv2.waitKey(0) & 0xFF
+    key = cv2.waitKey(delay) & 0xFF
     if key == 27:
         sys.exit(0)
+
 
 def plot_img_array(img_array, ncol=3):
     nrow = len(img_array) // ncol
